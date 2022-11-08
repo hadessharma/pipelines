@@ -1,0 +1,123 @@
+parameters:
+  servicesTfdir: "/null"
+  workloadsTfdir: "/null"
+  terraformVersion: ""
+  backendServiceArm: "" # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+  environmentServiceNameAzureRM: "" # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+  backendAzureRmResourceGroupName: ""
+  backendAzureRmStorageAccountName: ""
+  servicesBackendAzureRmKey: ""
+  workloadsBackendAzureRmKey: ""
+  backendAzureRmContainerName: "terraform-state"
+  tfvarsfile: "_env.tfvars"
+  tfplan: "tf.plan"
+  stagePrefix: ""
+  planEnvironment: "Plans"
+  applyEnvironment: ""
+
+stages:
+  # Services Plan and Apply Starts here
+  - stage: "${{ parameters.stagePrefix }}_Services_Plan"
+    displayName: "Services_Plan"
+    jobs:
+      - deployment: "Services_InitandPlan"
+        displayName: "Terraform Init and Plan"
+        environment: "${{ parameters.planEnvironment }}"
+        workspace:
+          clean: all
+        pool:
+          name: "azureaustraliaeastselfhosted"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: template-init-plan.yml
+                  parameters:
+                    tfdir: "${{ parameters.servicesTfdir }}"
+                    backendAzureRmResourceGroupName: "${{ parameters.backendAzureRmResourceGroupName }}"
+                    backendAzureRmStorageAccountName: "${{ parameters.backendAzureRmStorageAccountName }}"
+                    backendAzureRmKey: "${{ parameters.servicesBackendAzureRmKey }}"
+                    backendServiceArm: "${{ parameters.backendServiceArm }}" # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+                    environmentServiceNameAzureRM: "${{ parameters.environmentServiceNameAzureRM }}" # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+                    terraformVersion: "${{ parameters.terraformVersion }}"
+                    artifactName: "services"
+
+  - stage: "${{ parameters.stagePrefix }}_Services_Apply"
+    displayName: "Services_Apply"
+    dependsOn: "${{ parameters.stagePrefix }}_Services_Plan"
+    jobs:
+      - deployment: "Services_InitPlanApply"
+        displayName: "Terraform Init, and Apply"
+        environment: "${{ parameters.applyEnvironment }}"
+        workspace:
+          clean: all
+        pool:
+          name: "azureaustraliaeastselfhosted"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: template-init-apply.yml
+                  parameters:
+                    tfdir: "${{ parameters.servicesTfdir }}"
+                    backendAzureRmResourceGroupName: "${{ parameters.backendAzureRmResourceGroupName }}"
+                    backendAzureRmStorageAccountName: "${{ parameters.backendAzureRmStorageAccountName }}"
+                    backendAzureRmKey: "${{ parameters.servicesBackendAzureRmKey }}"
+                    backendServiceArm: "${{ parameters.backendServiceArm }}" # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+                    environmentServiceNameAzureRM: "${{ parameters.environmentServiceNameAzureRM }}" # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+                    terraformVersion: "${{ parameters.terraformVersion }}"
+                    artifactName: "services"
+
+  # Workloads Plan and Apply Starts here
+
+  - stage: "${{ parameters.stagePrefix }}_Workloads_Plan"
+    displayName: "Workloads_Plan"
+    jobs:
+      - deployment: "Workloads_InitandPlan"
+        displayName: "Terraform Init and Plan"
+        environment: "${{ parameters.planEnvironment }}"
+        workspace:
+          clean: all
+        pool:
+          name: "azureaustraliaeastselfhosted"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: template-init-plan.yml
+                  parameters:
+                    tfdir: "${{ parameters.workloadsTfdir }}"
+                    backendAzureRmResourceGroupName: "${{ parameters.backendAzureRmResourceGroupName }}"
+                    backendAzureRmStorageAccountName: "${{ parameters.backendAzureRmStorageAccountName }}"
+                    backendAzureRmKey: "${{ parameters.workloadsBackendAzureRmKey }}"
+                    backendServiceArm: "${{ parameters.backendServiceArm }}" # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+                    environmentServiceNameAzureRM: "${{ parameters.environmentServiceNameAzureRM }}" # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+                    terraformVersion: "${{ parameters.terraformVersion }}"
+                    artifactName: "workloads"
+
+  - stage: "${{ parameters.stagePrefix }}_Workloads_Apply"
+    displayName: "Workloads_Apply"
+    dependsOn: "${{ parameters.stagePrefix }}_Workloads_Plan"
+    jobs:
+      - deployment: "Workloads_InitPlanApply"
+        displayName: "Terraform Init, and Apply"
+        environment: "${{ parameters.applyEnvironment }}"
+        workspace:
+          clean: all
+        pool:
+          name: "azureaustraliaeastselfhosted"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: template-init-apply.yml
+                  parameters:
+                    tfdir: "${{ parameters.workloadsTfdir }}"
+                    backendAzureRmResourceGroupName: "${{ parameters.backendAzureRmResourceGroupName }}"
+                    backendAzureRmStorageAccountName: "${{ parameters.backendAzureRmStorageAccountName }}"
+                    backendAzureRmKey: "${{ parameters.workloadsBackendAzureRmKey }}"
+                    backendServiceArm: "${{ parameters.backendServiceArm }}" # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+                    environmentServiceNameAzureRM: "${{ parameters.environmentServiceNameAzureRM }}" # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+                    terraformVersion: "${{ parameters.terraformVersion }}"
+                    artifactName: "workloads"
+                    uploadCustomScriptExtension: true

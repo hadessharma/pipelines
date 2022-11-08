@@ -1,0 +1,63 @@
+parameters:
+  tfdir: "/null"
+  tfvarsfile: "_env.tfvars"
+  tfplan: "tf.plan"
+  backendServiceArm: ""
+  environmentServiceNameAzureRM: ""
+  backendAzureRmResourceGroupName: ""
+  backendAzureRmStorageAccountName: ""
+  backendAzureRmKey: ""
+  terraformVersion: ""
+  artifactName: ""
+  uploadCustomScriptExtension: false
+
+steps:
+  - task: AzureKeyVault@1
+    displayName: "Retrieving Domain Join Credentials"
+    inputs:
+      azureSubscription: "spn-prd-iac-idy-001"
+      KeyVaultName: "kvprdidysvc001"
+      SecretsFilter: "AD-Domain-Join,AD-Domain-Join-PW"
+
+  - template: template-init.yml
+    parameters:
+      tfdir: "${{ parameters.tfdir }}"
+      backendServiceArm: ${{ parameters.backendServiceArm }} # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+      environmentServiceNameAzureRM: ${{ parameters.environmentServiceNameAzureRM }} # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+      backendAzureRmResourceGroupName: ${{ parameters.backendAzureRmResourceGroupName }}
+      backendAzureRmStorageAccountName: ${{ parameters.backendAzureRmStorageAccountName }}
+      backendAzureRmKey: ${{ parameters.backendAzureRmKey }}
+      terraformVersion: ${{ parameters.terraformVersion }}
+      uploadCustomScriptExtension: ${{ parameters.uploadCustomScriptExtension }}
+
+  - download: current
+    artifact: ${{parameters.artifactName}}
+
+  - task: CopyFiles@2
+    displayName: Copy plan to Terraform dir
+    inputs:
+      sourceFolder: "$(Pipeline.Workspace)/${{parameters.artifactName}}"
+      contents: |
+        **/*.plan
+        **/*.lock.hcl
+      targetFolder: "${{ parameters.tfdir }}"
+
+  - bash: |
+      publicIp=$(curl -s http://ipinfo.io/json | jq '.ip' -r)
+      echo $publicIp   
+
+      pwd
+      ls
+
+      export TF_VAR_pipeline_public_ip=$publicIp
+      export TF_VAR_pipeline_stage=$SYSTEM_STAGENAME
+      export TF_VAR_pipeline_executor=$BUILD_REQUESTEDFOREMAIL
+      export TF_VAR_pipeline_versionmessage=$BUILD_SOURCEVERSIONMESSAGE
+      export TF_VAR_ad_domainjoin_un=$(AD-Domain-Join)
+      export TF_VAR_ad_domainjoin_pw=$(AD-Domain-Join-PW)
+      export ARM_CLIENT_SECRET=$(ARM_CLIENT_SECRET)
+      echo terraform apply -input=false ${{ parameters.tfplan }}
+      terraform apply -input=false ${{ parameters.tfplan }}
+
+    displayName: "Terraform apply"
+    workingDirectory: "${{ parameters.tfdir }}"

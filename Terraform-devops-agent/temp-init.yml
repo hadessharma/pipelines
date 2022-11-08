@@ -1,0 +1,145 @@
+parameters:
+  tfdir: "/null"
+  terraformVersion: ""
+  backendServiceArm: "" # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+  environmentServiceNameAzureRM: "" # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+  backendAzureRmResourceGroupName: ""
+  backendAzureRmStorageAccountName: ""
+  backendAzureRmKey: ""
+  backendAzureRmContainerName: "terraform-state"
+  tfvarsfile: "_env.tfvars"
+  tfplan: "tf.plan"
+  uploadCustomScriptExtension: false
+
+steps:
+  - checkout: "self"
+  - task: AzureCLI@2
+    condition: eq('${{ parameters.uploadCustomScriptExtension }}',true)
+    displayName: "Upload customscriptextension to Blob"
+    inputs:
+      azureSubscription: ${{ parameters.environmentServiceNameAzureRM }}
+      scriptType: bash
+      scriptLocation: "inlineScript"
+      workingDirectory: $(System.DefaultWorkingDirectory)/scripts/powershell/UsedByCustomScriptExtension
+      inlineScript: |
+        echo "###### Before listing directory"
+        ls
+        az account set --subscription Platform-Management
+        az storage blob delete --auth-mode login --account-name stasahigmgtprd --container-name customscriptextensions --name CombinedScripts_Extension.ps1
+        echo "######  Deleted the blob CombinedScripts_Extension.ps1, ready to upload latest version of CombinedScripts_Extension.ps1"
+        az storage blob upload --auth-mode login  --account-name stasahigmgtprd --container-name customscriptextensions --name CombinedScripts_Extension.ps1 --file CombinedScripts_Extension.ps1
+        echo "######  Done uploading the latest version of CombinedScripts_Extension.ps1"
+      addSpnToEnvironment: true
+  - task: AzureCLI@1
+    displayName: "Set Terraform backend"
+    inputs:
+      azureSubscription: ${{ parameters.backendServiceArm }}
+      scriptLocation: inlineScript
+      inlineScript: |
+        rg='${{ parameters.backendAzureRmResourceGroupName }}'
+        export AZURE_STORAGE_ACCOUNT='${{ parameters.backendAzureRmStorageAccountName }}'
+        export AZURE_STORAGE_KEY="$(az storage account keys list -g "$rg" -n "$AZURE_STORAGE_ACCOUNT" --query '[0].value' -o tsv)"
+        echo "##vso[task.setvariable variable=SA_ACCESS_KEY;issecret=true]$AZURE_STORAGE_KEY"
+        export
+      addSpnToEnvironment: true
+
+  - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@0
+    displayName: "Install Terraform"
+    inputs:
+      terraformVersion: ${{ parameters.terraformVersion }}
+
+  - task: AzureCLI@1
+    displayName: "Login to Azure"
+    inputs:
+      azureSubscription: ${{ parameters.environmentServiceNameAzureRM }}
+      scriptLocation: inlineScript
+      inlineScript: |
+        echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId"
+        echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;issecret=true]$servicePrincipalKey"
+        echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+        subscriptionId=$(az account show --query id -o tsv)
+        echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$subscriptionId"
+      addSpnToEnvironment: true
+
+  # - task: AzureCLI@1
+  #   displayName: 'Add IP to Storage Account Network and Key Vault ACLs'
+  #   condition: always()
+  #   inputs:
+  #     azureSubscription: ${{ parameters.environmentServiceNameAzureRM }}
+  #     scriptType: 'bash'
+  #     scriptLocation: inlineScript
+  #     inlineScript: |
+  #       pwd
+  #       publicIp=$(curl -s http://ipinfo.io/json | jq '.ip' -r)
+  #       echo $publicIp
+  #       rg=$(az storage account list --query "[?name!='stasahigpfmgttf']" -o json | jq '.[].resourceGroup' -r)
+  #       sa=$(az storage account list --query "[?name!='stasahigpfmgttf']" -o json | jq '.[].name' -r)
+  #       az storage account network-rule add -g $rg --account-name $sa --ip-address $publicIp
+  #       kv=$(az keyvault list --query "[?name!='kvprdiacspn001']" -o json | jq '.[].name' -r)
+  #       az keyvault network-rule add -g $rg --name $kv --ip-address $publicIp
+  #       sleep 20
+  #     addSpnToEnvironment: true
+
+  # - bash: |
+  #     pwd
+  #     subscriptionId=$(az account show --query id -o tsv)
+  #     echo $subscriptionId
+  #     echo terraform init
+  #     terraform init \
+  #       -backend-config=access_key=$(SA_ACCESS_KEY) \
+  #       -backend-config=storage_account_name=${{ parameters.backendAzureRmStorageAccountName }} \
+  #       -backend-config=container_name=${{ parameters.backendAzureRmContainerName }} \
+  #       -backend-config=key=${{ parameters.backendAzureRmKey }} \
+  #       -backend-config=resource_group_name=${{ parameters.backendAzureRmResourceGroupName }} \
+  #       -backend-config=subscription_id=$subscriptionId \
+  #       -backend-config=tenant_id=$tenantId \
+  #       -backend-config=client_id=$servicePrincipalId \
+  #       -backend-config=client_secret="$servicePrincipalKey"
+
+  #   displayName: 'Terraform init'
+  #   workingDirectory: '${{ parameters.tfdir }}'
+
+  # - task: AzureCLI@1
+  #   displayName: 'Add IP to Storage Account Network and Key Vault ACLs'
+  #   condition: always()
+  #   inputs:
+  #     azureSubscription: ${{ parameters.environmentServiceNameAzureRM }}
+  #     scriptType: 'bash'
+  #     scriptLocation: inlineScript
+  #     inlineScript: |
+  #       pwd
+  #       publicIp=$(curl -s http://ipinfo.io/json | jq '.ip' -r)
+  #       echo $publicIp
+  #       az storage account list --query "[?name!='stasahigpfmgttf']" -o json | jq -r '.[] | .resourceGroup, .name '  | (
+  #       while read rg; do
+  #         read name
+  #         az storage account network-rule add -g $rg --account-name $name --ip-address $publicIp
+  #       done
+  #       )
+  #       az keyvault list --query "[?name!='kvprdiacspn001']" -o json | jq -r '.[] | .resourceGroup, .name '  | (
+  #       while read rg; do
+  #         read name
+  #         az keyvault network-rule add -g $rg --name $name --ip-address $publicIp
+  #       done
+  #       )
+  #       sleep 20
+  #     addSpnToEnvironment: true
+
+  - bash: |
+      pwd
+      subscriptionId=$(az account show --query id -o tsv)
+      echo $subscriptionId
+      echo terraform init
+      terraform init -upgrade \
+        -backend-config=access_key=$(SA_ACCESS_KEY) \
+        -backend-config=storage_account_name=${{ parameters.backendAzureRmStorageAccountName }} \
+        -backend-config=container_name=${{ parameters.backendAzureRmContainerName }} \
+        -backend-config=key=${{ parameters.backendAzureRmKey }} \
+        -backend-config=resource_group_name=${{ parameters.backendAzureRmResourceGroupName }} \
+        -backend-config=subscription_id=$subscriptionId \
+        -backend-config=tenant_id=$tenantId \
+        -backend-config=client_id=$servicePrincipalId \
+        -backend-config=client_secret="$servicePrincipalKey"
+
+    displayName: "Terraform init"
+    workingDirectory: "${{ parameters.tfdir }}"

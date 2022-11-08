@@ -1,0 +1,75 @@
+parameters:
+  tfdir: "/null"
+  terraformVersion: ""
+  backendServiceArm: "" # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+  environmentServiceNameAzureRM: "" # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+  backendAzureRmResourceGroupName: ""
+  backendAzureRmStorageAccountName: ""
+  backendAzureRmKey: ""
+  backendAzureRmContainerName: "terraform-state"
+  tfvarsfile: "_env.tfvars"
+  tfplan: "tf.plan"
+  artifactName: ""
+
+steps:
+  - template: template-init.yml
+    parameters:
+      tfdir: ${{ parameters.tfdir }}
+      backendServiceArm: ${{ parameters.backendServiceArm }} # SPN WITH R/W ACCESS TO WHERE TF STATE IS TO BE STORED
+      environmentServiceNameAzureRM: ${{ parameters.environmentServiceNameAzureRM }} # SPN WITH R/W ACCESS TO TARGET LOCATION OF RESOURCES TO BE DEPLOYED
+      backendAzureRmResourceGroupName: ${{ parameters.backendAzureRmResourceGroupName }}
+      backendAzureRmStorageAccountName: ${{ parameters.backendAzureRmStorageAccountName }}
+      backendAzureRmKey: ${{ parameters.backendAzureRmKey }}
+      terraformVersion: ${{ parameters.terraformVersion }}
+
+  - task: AzureKeyVault@1
+    displayName: "Retrieving Domain Join Credentials"
+    inputs:
+      azureSubscription: "spn-prd-iac-idy-001"
+      KeyVaultName: "kvprdidysvc001"
+      SecretsFilter: "AD-Domain-Join,AD-Domain-Join-PW"
+
+  - bash: |
+      pwd
+      publicIp=$(curl -s http://ipinfo.io/json | jq '.ip' -r)
+      echo $publicIp
+      export TF_VAR_pipeline_public_ip=$publicIp
+      export TF_VAR_pipeline_stage=$SYSTEM_STAGENAME
+      export TF_VAR_pipeline_executor=$BUILD_REQUESTEDFOREMAIL
+      export TF_VAR_pipeline_versionmessage=$BUILD_SOURCEVERSIONMESSAGE
+      export TF_VAR_ad_domainjoin_un=$(AD-Domain-Join)
+      export TF_VAR_ad_domainjoin_pw=$(AD-Domain-Join-PW)
+      export ARM_CLIENT_SECRET=$(ARM_CLIENT_SECRET)
+
+      echo terraform plan -var-file=${{ parameters.tfvarsfile}} -out=${{ parameters.tfplan }} 
+      terraform plan -var-file=${{ parameters.tfvarsfile}} -out=${{ parameters.tfplan }}
+
+      # Use the terraform plan from previous step to generate a human readable plan file.
+      terraform show -no-color ${{ parameters.tfplan }} > ${{ parameters.tfplan }}-fullsummaryreadableplan.txt
+
+      # Use the human readable terraform plan file from previous step and filter into smaller / concise summary files.
+      awk '/(be replaced)|(be updated in-place)|(be destroyed)|(be created)/' ${{ parameters.tfplan }}-fullsummaryreadableplan.txt > ${{ parameters.tfplan }}-summary-format1.txt
+
+      # Upload  to summary pane ( under extensions )
+      echo '##vso[task.uploadsummary]${{ parameters.tfdir }}/${{ parameters.tfplan }}-summary-format1.txt'
+
+    displayName: "Terraform plan"
+    workingDirectory: "${{ parameters.tfdir }}"
+    failOnStderr: true
+
+  - task: CopyFiles@2
+    inputs:
+      cleanTargetFolder: true
+      sourceFolder: "${{ parameters.tfdir }}"
+      contents: |
+        **/*.plan
+        **/*.txt
+        **/*.lock.hcl
+      targetFolder:
+        "$(Pipeline.Workspace)/drop"
+
+        # Create an artifact that we can use in the next stage.
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: "$(Pipeline.Workspace)/drop"
+      artifact: "${{parameters.artifactName}}"

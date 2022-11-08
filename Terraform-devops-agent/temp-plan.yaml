@@ -1,0 +1,72 @@
+parameters:
+  tfdir: "/null"
+  tfvarsfile: "_env.tfvars"
+  tfplan: "tf.plan"
+
+steps:
+  - task: AzureKeyVault@1
+    displayName: "Retrieving Domain Join Credentials"
+    inputs:
+      azureSubscription: "spn-prd-iac-idy-001"
+      KeyVaultName: "kvprdidysvc001"
+      SecretsFilter: "AD-Domain-Join,AD-Domain-Join-PW"
+
+  - bash: |
+      pwd
+      publicIp=$(curl -s http://ipinfo.io/json | jq '.ip' -r)
+      echo $publicIp
+      export TF_VAR_pipeline_public_ip=$publicIp
+      export TF_VAR_pipeline_stage=$SYSTEM_STAGENAME
+      export TF_VAR_pipeline_executor=$BUILD_REQUESTEDFOREMAIL
+      export TF_VAR_pipeline_versionmessage=$BUILD_SOURCEVERSIONMESSAGE
+      export TF_VAR_ad_domainjoin_un=$(AD-Domain-Join)
+      export TF_VAR_ad_domainjoin_pw=$(AD-Domain-Join-PW)
+      export ARM_CLIENT_SECRET=$(ARM_CLIENT_SECRET)
+
+      echo terraform plan -var-file=${{ parameters.tfvarsfile}} -out=${{ parameters.tfplan }} 
+      terraform plan -var-file=${{ parameters.tfvarsfile}} -out=${{ parameters.tfplan }}
+
+    displayName: "Terraform plan"
+    workingDirectory: "${{ parameters.tfdir }}"
+# - task: AzureCLI@1
+#   displayName: 'Remove IP from Storage Account Network ACL'
+#   condition: always()
+#   inputs:
+#     azureSubscription: ${{ parameters.environmentServiceNameAzureRM }}
+#     scriptType: 'bash'
+#     scriptLocation: inlineScript
+#     inlineScript: |
+#       pwd
+#       publicIp=$(curl -s http://ipinfo.io/json | jq '.ip' -r)
+#       echo $publicIp
+#       rg=$(az storage account list --query "[?name!='stasahigpfmgttf']" -o json | jq '.[].resourceGroup' -r)
+#       sa=$(az storage account list --query "[?name!='stasahigpfmgttf']" -o json | jq '.[].name' -r)
+#       az storage account network-rule remove -g $rg --account-name $sa --ip-address $publicIp
+#       kv=$(az keyvault list --query "[?name!='kvprdiacspn001']" -o json | jq '.[].name' -r)
+#       az keyvault network-rule remove -g $rg --name $kv --ip-address $publicIp
+#     addSpnToEnvironment: true
+
+# - task: AzureCLI@1
+#   displayName: 'Remove IP from Storage Account Network ACL'
+#   condition: always()
+#   inputs:
+#     azureSubscription: ${{ parameters.environmentServiceNameAzureRM }}
+#     scriptType: 'bash'
+#     scriptLocation: inlineScript
+#     inlineScript: |
+#       pwd
+#       publicIp=$(curl -s http://ipinfo.io/json | jq '.ip' -r)
+#       echo $publicIp
+#       az storage account list --query "[?name!='stasahigpfmgttf']" -o json | jq -r '.[] | .resourceGroup, .name '  | (
+#       while read rg; do
+#         read name
+#         az storage account network-rule remove -g $rg --account-name $name --ip-address $publicIp
+#       done
+#       )
+#       az keyvault list --query "[?name!='kvprdiacspn001']" -o json | jq -r '.[] | .resourceGroup, .name '  | (
+#       while read rg; do
+#         read name
+#         az keyvault network-rule remove -g $rg --name $name --ip-address $publicIp
+#       done
+#       )
+#     addSpnToEnvironment: true
